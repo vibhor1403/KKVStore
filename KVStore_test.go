@@ -8,9 +8,9 @@ import (
 	"time"
 	//"sync"
 	//"math/rand"
-	"strconv"
-	"io/ioutil"
 	"encoding/json"
+	"io/ioutil"
+	"strconv"
 )
 
 // Following constants can be changed in order to do performance testing.
@@ -28,7 +28,9 @@ type logItem struct {
 }
 
 type ServerPersist struct {
-	Log      []logItem 
+	LastApplied int
+	VotedFor    int
+	Log         []logItem
 }
 
 type Debug bool
@@ -45,23 +47,75 @@ const total_servers = 5
 
 var proc []*exec.Cmd
 var logFilePath []string
+var path, configFilePath, storeFilePath, serverLogPath string
+
+func initialize() {
+	logFilePath = make([]string, total_servers)
+	path = os.Getenv("GOPATH") + "/bin/KVStore"
+	serverLogPath = os.Getenv("HOME") + "/Desktop/server.log"
+	
+	configFilePath = os.Getenv("GOPATH") + "/KVStore/config.json"
+	storeFilePath = os.Getenv("HOME") + "/Desktop/leveldblog.db"
+	for i := 0; i < total_servers; i++ {
+		logFilePath[i] = os.Getenv("HOME") + "/Desktop/" + strconv.Itoa(i+1) + ".log"
+	}
+}
+
+func checkLogs() bool {
+
+	datatype := make([]*ServerPersist, total_servers)
+	for i := 0; i < total_servers; i++ {
+		file, e1 := ioutil.ReadFile(logFilePath[i])
+		if e1 == nil {
+			err := json.Unmarshal(file, &datatype[i])
+			if err != nil {
+				datatype[i] = &ServerPersist{
+					Log:         []logItem{logItem{Term: -1, Msg: "Dummy"}},
+					LastApplied: 0,
+					VotedFor:    0}
+			}
+		}
+
+	}
+	min := 100000
+	for i := 0; i < total_servers; i++ {
+		min = func(x, y int) int {
+			if x < y {
+				return x
+			}
+			return y
+		}(len(datatype[i].Log), min)
+	}
+	var flag bool
+	for i := 0; i < min; i++ {
+		flag = true
+		a := datatype[0].Log[i]
+		for j := 1; j < total_servers; j++ {
+			if a == datatype[j].Log[i] {
+				continue
+			} else {
+				flag = false
+			}
+		}
+		if flag == false {
+			break
+		}
+	}
+	return flag
+}
 
 func Test_NoFault(t *testing.T) {
 
 	proc = make([]*exec.Cmd, total_servers)
-	logFilePath = make([]string, total_servers)
-	path := os.Getenv("GOPATH") + "/bin/KVStore"
-	configFilePath := os.Getenv("GOPATH") + "/src/github.com/vibhor1403/KVStore/config.json"
-	storeFilePath := os.Getenv("HOME") + "/Desktop/leveldblog.db"
 
-	fmt.Println("GOPATH=", path)
+	initialize()
+
+
 	for i := 0; i < total_servers; i++ {
-		logFilePath[i] = os.Getenv("HOME") + "/Desktop/" + strconv.Itoa(i+1) + ".log"
 		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath)
-		fmt.Println(proc[i])
 
 		proc[i].Stdout = os.Stdout
-		proc[i].Stderr = os.Stdout
+		proc[i].Stderr = os.Stderr
 	}
 	for i := 0; i < total_servers; i++ {
 		go func(i int) {
@@ -78,43 +132,52 @@ func Test_NoFault(t *testing.T) {
 	cmd := exec.Command("killall -9 KVStore")
 	cmd.Run()
 
-	datatype := make([]*ServerPersist, total_servers)
-	for i := 0; i < total_servers; i++ {
-		file, e1 := ioutil.ReadFile(logFilePath[i])
-		if e1 == nil {
-			//ioutil.WriteFile(logFile, []byte(""), os.ModeExclusive)
-			err := json.Unmarshal(file, &datatype[i])
-			if err != nil {
-				datatype[i] = &ServerPersist{
-					Log: []logItem{logItem{Term: -1, Msg: "Dummy"}}}
-			}
-		}
+	flag := checkLogs()
+	if flag == true {
+		t.Log("No fault test passed")
+	} else {
+		t.Error("Test failed, logs not equal")
+	}
+}
 
+func Test_Stale(t *testing.T) {
+
+	proc = make([]*exec.Cmd, total_servers)
+
+	initialize()
+	//left one server
+	for i := 1; i < total_servers; i++ {
+		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath)
+
+		proc[i].Stdout = os.Stdout
+		proc[i].Stderr = os.Stderr
 	}
-	min := 100000 
-	for i:=0; i<total_servers; i++ {
-		min = func(x, y int) int {
-				if x < y {
-					return x
-				}
-				return y
-			}(len(datatype[i].Log), min)
-	}
-	fmt.Println("minimum", min)
-	var flag bool
-	for i:= 0 ; i<min; i++ {
-		flag = true
-		a := datatype[0].Log[i]
-		for j:=1; j<total_servers; j++ {
-			if a == datatype[j].Log[i] {
-				continue
-			}else {
-				flag = false
+	for i := 1; i < total_servers; i++ {
+		go func(i int) {
+			er := proc[i].Run()
+			if er != nil {
+				fmt.Println("err", er)
 			}
-		}
-		if flag == false {
-			break
-		} 
+		}(i)
 	}
-	fmt.Println("flag", flag)
+	time.Sleep(5 * time.Second)
+
+	proc[0] = exec.Command(path, strconv.Itoa(1), configFilePath, logFilePath[0], storeFilePath)
+	proc[0].Stdout = os.Stdout
+	proc[0].Stderr = os.Stderr
+
+	time.Sleep(10 * time.Second)
+
+	for i := 0; i < total_servers; i++ {
+		proc[i].Process.Kill()
+	}
+	cmd := exec.Command("killall -9 KVStore")
+	cmd.Run()
+
+	flag := checkLogs()
+	if flag == true {
+		t.Log("No fault test passed")
+	} else {
+		t.Error("Test failed, logs not equal")
+	}
 }
