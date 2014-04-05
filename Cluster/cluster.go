@@ -7,7 +7,7 @@ import (
 	"fmt"
 	zmq "github.com/pebbe/zmq4"
 	"io/ioutil"
-	"time"
+	//"time"
 )
 
 const (
@@ -16,12 +16,14 @@ const (
 )
 
 type Debug bool
+
 //// For debugging capabilities..
 func (d Debug) Println(a ...interface{}) {
 	if d {
 		fmt.Println(a...)
 	}
 }
+
 const dbg Debug = false
 
 // Envelope describes the message structure to be followed to communicate with other servers.
@@ -35,14 +37,13 @@ type Envelope struct {
 	// MsgId is an id that globally and uniquely identifies the message, meant for duplicate detection at
 	// higher levels. It is opaque to this package.
 	MsgId int
-	
-	
+
 	// the actual message.
 	Msg interface{}
 
 	//Term contains the current local value of term. Servers synchronize with each other using this value, by message passing.
 	Term int
-	
+
 	// 	Type can hold the following values:
 	//	REQUESTVOTE = 1
 	//	HEARTBEAT   = 2
@@ -58,7 +59,7 @@ type Envelope struct {
 	//term of prevLogIndex entry
 	PrevLogTerm int
 	//leader’s commitIndex
-	LeaderCommit int 
+	LeaderCommit int
 }
 
 // Server interface provides various methods for retriving information about the cluster.
@@ -74,9 +75,8 @@ type Server interface {
 
 	// Inbox is the channel to receive messages from other peers.
 	Inbox() chan *Envelope
-	
-	Stop() chan bool
 
+	Stop() chan bool
 }
 
 // JSON object to read from and write to a file
@@ -89,23 +89,22 @@ type ObjectType struct {
 	Servers []ServerConfig
 }
 
-
 //ServerConfig is structure containing all the information needed about this server
 type ServerConfig struct {
 	// Pid of this server
-	Mypid   int
+	Mypid int
 	// Url (ip:port) of this server
-	Url     string
+	Url string
 	// Input channel for holding incoming data
-	Input   chan *Envelope 
+	Input chan *Envelope
 	// Output channel for sending data to other peers
-	Output  chan *Envelope 
+	Output chan *Envelope
 	// Array of peers
-	Mypeers []int 
+	Mypeers []int
 	// Array of all sockets opened by this server (contains 4 outbound sockets)
-	Sockets []*zmq.Socket 
-		// Stopping channel indicates the process of server shutdown.
-	Stopping			chan bool 
+	Sockets []*zmq.Socket
+	// Stopping channel indicates the process of server shutdown.
+	Stopping chan bool
 }
 
 func (sc ServerConfig) Pid() int {
@@ -128,7 +127,6 @@ func (sc ServerConfig) Stop() chan bool {
 	return sc.Stopping
 }
 
-
 //func (sc ServerConfig) MsgRcvd() int {
 //	return sc.N_msgRcvd
 //}
@@ -146,26 +144,26 @@ func New(pid int, conf string) *ServerConfig {
 
 	file, e := ioutil.ReadFile(conf)
 	if e != nil {
-		panic ("Could not read file")
+		panic("Could not read file")
 	}
 	var jsontype jsonobject
 	err := json.Unmarshal(file, &jsontype)
 	if err != nil {
-		panic ("Wrong format of conf file")
+		panic("Wrong format of conf file")
 	}
 
 	// Inialization of mapping and server parameters.
 	mapping = make(map[int]string)
 	sc := &ServerConfig{
-		Mypid:   pid,
-		Url:     mapping[pid],
-		Input:   make(chan *Envelope),
-		Output:  make(chan *Envelope),
-		Mypeers: make([]int, jsontype.Object.Total-1),
-		Sockets: make([]*zmq.Socket, jsontype.Object.Total-1),
-		Stopping:			make(chan bool) }
+		Mypid:    pid,
+		Url:      mapping[pid],
+		Input:    make(chan *Envelope),
+		Output:   make(chan *Envelope),
+		Mypeers:  make([]int, jsontype.Object.Total-1),
+		Sockets:  make([]*zmq.Socket, jsontype.Object.Total-1),
+		Stopping: make(chan bool)}
 
-// Populates the peers of the servers, and opens the outbound ZMQ sockets for each of them.
+	// Populates the peers of the servers, and opens the outbound ZMQ sockets for each of them.
 	k := 0
 	for i := 0; i < jsontype.Object.Total; i++ {
 		mapping[jsontype.Object.Servers[i].Mypid] = jsontype.Object.Servers[i].Url
@@ -175,19 +173,19 @@ func New(pid int, conf string) *ServerConfig {
 			sc.Sockets[k], err = zmq.NewSocket(zmq.PUSH)
 
 			if err != nil {
-				panic (fmt.Sprintf("Unable to open socket for %v as %v", sc.Mypeers[k], err))
+				panic(fmt.Sprintf("Unable to open socket for %v as %v", sc.Mypeers[k], err))
 			}
 			err = sc.Sockets[k].Connect("tcp://" + mapping[sc.Mypeers[k]])
 			if err != nil {
-				panic (fmt.Sprintf("Unable to connect socket for %v as %v", sc.Mypeers[k], err))
+				panic(fmt.Sprintf("Unable to connect socket for %v as %v", sc.Mypeers[k], err))
 			}
 			k++
 		}
 	}
 	sc.Url = mapping[pid]
 
-// 	Starts two go routines each for input and output channel functionalities..
-//	go CheckInput(sc)
+	// 	Starts two go routines each for input and output channel functionalities..
+	//	go CheckInput(sc)
 	dbg.Println("ye wale routine")
 	go CheckOutput(sc)
 	go Listen(sc)
@@ -221,7 +219,7 @@ func CheckOutput(sc *ServerConfig) {
 					_, err := sc.Sockets[i].Send(string(b), 0)
 					if err != nil {
 						panic(fmt.Sprintf("Could not send message,%v,%v..%v", sc.Mypid, sc.Mypeers[i], err))
-					}			
+					}
 				}
 			} else {
 				b, _ := json.Marshal(*x)
@@ -263,28 +261,28 @@ func Listen(sc *ServerConfig) {
 	}
 	defer listenSocket.Close()
 	listenSocket.Bind("tcp://" + sc.Url)
-	listenSocket.SetRcvtimeo(5*time.Second)
+	//listenSocket.SetRcvtimeo(5*time.Second)
 	listenSocket.SetRcvtimeo(-1)
 	for {
-//		if getState(sc) == CLOSEDSTATE {
-//			sc.Stopping <- true
-//			close(sc.Input)
-//			return
-//		}
-		dbg.Println(sc.Mypeers)				
-		dbg.Println("sun ne ki koshish")		
+		//		if getState(sc) == CLOSEDSTATE {
+		//			sc.Stopping <- true
+		//			close(sc.Input)
+		//			return
+		//		}
+		dbg.Println(sc.Mypeers)
+		dbg.Println("sun ne ki koshish")
 		msg, err := listenSocket.Recv(0)
 		dbg.Println("mila")
 		if err != nil {
 			// If timeout happens and server is not issued a closed request, either the link is temporarily down, or all other peers are down.
 			// In such case, start listening again.
-//			if getState(sc) != CLOSEDSTATE {
-//				go Listen(sc)
-//			} else {
-//				//close(sc.Input)
-//				sc.Stopping <- true
-//				close(sc.Input)
-//			}
+			//			if getState(sc) != CLOSEDSTATE {
+			//				go Listen(sc)
+			//			} else {
+			//				//close(sc.Input)
+			//				sc.Stopping <- true
+			//				close(sc.Input)
+			//			}
 			sc.Stopping <- true
 			listenSocket.Close()
 			dbg.Println("timeout in listen")
@@ -294,12 +292,12 @@ func Listen(sc *ServerConfig) {
 		message := new(Envelope)
 		json.Unmarshal([]byte(msg), message)
 		sc.Input <- message
-//		if getState(sc) == CLOSEDSTATE {
-//			sc.Stopping <- true
-//			close(sc.Input)
-//			return
-//		} else {
-//			sc.Input <- message
-//		}
+		//		if getState(sc) == CLOSEDSTATE {
+		//			sc.Stopping <- true
+		//			close(sc.Input)
+		//			return
+		//		} else {
+		//			sc.Input <- message
+		//		}
 	}
 }
