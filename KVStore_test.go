@@ -52,12 +52,12 @@ var path, configFilePath, storeFilePath, serverLogPath string
 func initialize() {
 	logFilePath = make([]string, total_servers)
 	path = os.Getenv("GOPATH") + "/bin/KVStore"
-	serverLogPath = os.Getenv("HOME") + "/Desktop/server.log"
+	serverLogPath = os.Getenv("GOPATH") + "/KVStore/server.log"
 	
 	configFilePath = os.Getenv("GOPATH") + "/KVStore/config.json"
-	storeFilePath = os.Getenv("HOME") + "/Desktop/leveldblog.db"
+	storeFilePath = os.Getenv("GOPATH") + "/KVStore/leveldblog.db"
 	for i := 0; i < total_servers; i++ {
-		logFilePath[i] = os.Getenv("HOME") + "/Desktop/" + strconv.Itoa(i+1) + ".log"
+		logFilePath[i] = os.Getenv("GOPATH") + "/KVStore/" + strconv.Itoa(i+1) + ".log"
 	}
 }
 
