@@ -4,15 +4,14 @@ package Raft
 import (
 	"encoding/json"
 	"fmt"
+	leveldb "github.com/syndtr/goleveldb/leveldb"
 	cluster "github.com/vibhor1403/KVStore/Cluster"
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"reflect"
+	"strings"
 	"sync"
 	"time"
-	leveldb "github.com/syndtr/goleveldb/leveldb"
-	"strings"
 	//"strconv"
 	///"math"
 )
@@ -81,7 +80,7 @@ type Server interface {
 	//	CLOSEDSTATE	= 4
 	State() int
 
-	// Server Stopped channel synchronizes the closing of server. It will have a value, only when this server is completely closed,	
+	// Server Stopped channel synchronizes the closing of server. It will have a value, only when this server is completely closed,
 	// ie all the sockets, channels and goroutines are properly shut down.
 	ServerStopped() chan bool
 
@@ -103,8 +102,8 @@ type RequestMessage struct {
 
 type ServerPersist struct {
 	LastApplied int
-	VotedFor int
-	Log      []logItem 
+	VotedFor    int
+	Log         []logItem
 }
 
 type jsonobject struct {
@@ -230,43 +229,55 @@ func New(pid int, conf string, logFile string, storeFile string) Server {
 		panic("Wrong format of conf file")
 	}
 
-	dbg3.Println("logfile", logFile, conf)
-	file1, e1 := ioutil.ReadFile(logFile)
 	var datatype *ServerPersist
+	file1, e1 := ioutil.ReadFile(logFile)
 	if e1 == nil {
 		//ioutil.WriteFile(logFile, []byte(""), os.ModeExclusive)
 		err := json.Unmarshal(file1, &datatype)
 		if err != nil {
 			datatype = &ServerPersist{
-				Log:      []logItem{logItem{Term: -1, Msg: "Dummy"}},
-				LastApplied : 0, 
-				VotedFor: NONE }
+				Log:         []logItem{logItem{Term: -1, Msg: "Dummy"}},
+				LastApplied: 0,
+				VotedFor:    NONE}
+		}
+	} else {
+		datatype = &ServerPersist{
+			Log:         []logItem{logItem{Term: -1, Msg: "Dummy"}},
+			LastApplied: 0,
+			VotedFor:    NONE}
+
+		data, err := json.Marshal(datatype)
+		if err != nil {
+			fmt.Println("marshalling data error", err)
+		}
+
+		er := ioutil.WriteFile(logFile, data, os.ModeExclusive)
+		if er != nil {
+			fmt.Println("writin file error", er)
 		}
 	}
-	dbg3.Println("----------------------AT START", datatype.Log)
-	
+
 	store, er := leveldb.OpenFile(storeFile, nil)
 	if er != nil {
-		dbg4.Println("Could not open database")
+		dbg4.Println(storeFile, "Could not open database")
 		panic("Unable to open db")
 	}
-	dbg4.Println(store)
-	
-	
+	defer store.Close()
+
 	// Inialization of mapping and server parameters.
 	mapping = make(map[int]string)
 	sc := &ServerConfig{
-		basicCluster:       cluster.New(pid, conf),
-		ErrorChannel:       make(chan bool),
-		Stopped:            make(chan bool),
-		state:              FOLLOWER,
-		votedFor:           datatype.VotedFor,
-		term:               func(x, y int) int {
-								if x < y {
-									return y
-								}
-								return x
-							}(datatype.Log[len(datatype.Log)-1].Term, 0) , 
+		basicCluster: cluster.New(pid, conf),
+		ErrorChannel: make(chan bool),
+		Stopped:      make(chan bool),
+		state:        FOLLOWER,
+		votedFor:     datatype.VotedFor,
+		term: func(x, y int) int {
+			if x < y {
+				return y
+			}
+			return x
+		}(datatype.Log[len(datatype.Log)-1].Term, 0),
 		leader:             NONE,
 		electionTODuration: timeoutDuration,
 		heartbeatDuration:  heartbeatinterval,
@@ -302,28 +313,24 @@ func New(pid int, conf string, logFile string, storeFile string) Server {
 		sc.msgSend[i] = 0
 	}
 
-	dbg3.Println(sc.log,sc.nextIndex,"term",sc.term,"msgid",sc.msgId,"commitindex",sc.commitIndex)
-
-	dbg.Println("go routine started")
 	go CheckState(sc)
 	go clientInbox(sc)
 	go persistData(sc, logFile)
 	go printIndex(sc)
-	dbg3.Println("ho gaya main cahlu")
+
 	go applyLog(sc, store)
 	return sc
 }
 
-
-func applyLog(sc *ServerConfig, store *leveldb.DB){
-	timer := time.NewTimer(500*time.Millisecond)
+func applyLog(sc *ServerConfig, store *leveldb.DB) {
+	timer := time.NewTimer(500 * time.Millisecond)
 	var er error
 	for {
 		<-timer.C
 		dbg4.Println(sc.basicCluster.Mypid, "logAplied", sc.commitIndex, sc.lastApplied, sc.votedFor)
-		for i:= sc.lastApplied+1; i<sc.commitIndex; i++ {
+		for i := sc.lastApplied + 1; i < sc.commitIndex; i++ {
 			logMsg := sc.log[i].Msg.(string)
-			splits := strings.Split(logMsg," ")
+			splits := strings.Split(logMsg, " ")
 			if splits[0] == "set" {
 				er = store.Put([]byte(splits[1]), []byte(splits[2]), nil)
 				if er == nil {
@@ -331,11 +338,11 @@ func applyLog(sc *ServerConfig, store *leveldb.DB){
 				}
 			}
 		}
-		timer = time.NewTimer(500*time.Millisecond)
+		timer = time.NewTimer(500 * time.Millisecond)
 	}
 }
 
-func printIndex (sc *ServerConfig) {
+func printIndex(sc *ServerConfig) {
 	timer := time.NewTimer(time.Second)
 	for {
 		<-timer.C
@@ -344,25 +351,15 @@ func printIndex (sc *ServerConfig) {
 	}
 }
 
-
-
-
 func persistData(sc *ServerConfig, logFile string) {
 	timer := time.NewTimer(time.Second)
 	for {
 		<-timer.C
 		persistSC := &ServerPersist{
-			LastApplied : sc.lastApplied,
-			VotedFor: sc.votedFor,
-			Log:      sc.log }
+			LastApplied: sc.lastApplied,
+			VotedFor:    sc.votedFor,
+			Log:         sc.log}
 
-		//dbg3.Println(sc.log[0:5])
-		
-		//dbg2.Println("save time commit index", sc.commitIndex)
-		//persistSC.Log = persistSC.Log[0:sc.commitIndex+1]
-		
-		//f, er := os.Create("/home/vibhor/Desktop/"+logFile+".txt")
-		//fmt.Println("about to print", persistSC)
 		data, err := json.Marshal(persistSC)
 		if err != nil {
 			fmt.Println("error")
@@ -371,11 +368,6 @@ func persistData(sc *ServerConfig, logFile string) {
 		if er != nil {
 			fmt.Println("error", er)
 		}
-		//defer f.Close()
-		//_, er = f.Write(data)
-		//if er != nil {
-		//	fmt.Println("Error", er)
-		//}
 		timer = time.NewTimer(time.Second)
 	}
 }
@@ -486,90 +478,82 @@ func RandomTimer(duration time.Duration) <-chan time.Time {
 
 // follower loop realizes the logic of FOLLOWER as given in Raft consensus algorithm.
 func followerLoop(sc *ServerConfig) {
-	dbg.Println("In follower...")
+
 	timeChan := RandomTimer(sc.electionTODuration)
 
 	//dbg.Println(sc.basicCluster.Mypid, "state", state)
 	for getState(sc) == FOLLOWER {
 		//wait for inbox channel
-		//dbg.Println(sc.basicCluster.Mypid, "waiting at channel", sc.term, sc.state)
+
 		select {
 		case envelope := <-sc.basicCluster.Input:
-			//dbg1.Println("recieve, infollower", sc.basicCluster.Mypid, envelope)
+
 			// if a lower term message is recieved, send a modify message...
 			if envelope.Term < getTerm(sc) {
-				dbg.Println(sc.basicCluster.Mypid, "send, infollower1", envelope.SendBy, sc.term, "MODIFY")
+
 				sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: MODIFY}
 				// if heartbeat recieved, reset timer, update term if needed
 			} else if envelope.Term > getTerm(sc) && envelope.Type == REQUESTVOTE {
 				setTerm(sc, envelope.Term)
 				setVotedFor(sc, envelope.SendBy)
-				dbg.Println(sc.basicCluster.Mypid, "send, infollower2", envelope.SendBy, getTerm(sc), "GRANTVOTE")
+
 				sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: GRANTVOTE, VoteTo: envelope.SendBy}
 				// If heartbeat is recieved, sets the current term and updates leader.
 			} else if envelope.Type == HEARTBEAT {
 				setTerm(sc, envelope.Term)
 				setLeader(sc, envelope.SendBy)
 				// if request for vote recieved, take decision of granting vote or not and sent vote on channel and reset timer.
-			} else if envelope.Type == REQUESTVOTE && len(sc.log) <= envelope.PrevLogIndex + 1 { 
+			} else if envelope.Type == REQUESTVOTE && len(sc.log) <= envelope.PrevLogIndex+1 {
 				if sc.log[len(sc.log)-1].Term == envelope.PrevLogTerm {
 					setTerm(sc, envelope.Term)
 					if getVotedFor(sc) == NONE {
 						setVotedFor(sc, envelope.SendBy)
-						dbg1.Println(sc.basicCluster.Mypid, "send, infollower3", envelope.SendBy, getTerm(sc), "GRANTVOTE")
+
 						sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: GRANTVOTE, VoteTo: envelope.SendBy}
 					} else {
-						dbg.Println(sc.basicCluster.Mypid, "send, infollower4", envelope.SendBy, getTerm(sc), "NOVOTE")
+
 						sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: NOVOTE, VoteTo: sc.votedFor}
 					}
 				} else {
-					dbg.Println(sc.basicCluster.Mypid, "send, infollower4", envelope.SendBy, getTerm(sc), "NOVOTE")
+
 					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: NOVOTE, VoteTo: sc.votedFor}
 				}
-				//Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm 
+				//Reply false if log doesn’t contain an entry at prevLogIndex whose term matches prevLogTerm
 			} else if envelope.Type == APPEND {
-				dbg3.Println("APPEND recieved", envelope)
-				dbg3.Println(sc.log, "currindex", sc.currentLogIndex)
-				
+
 				maped := envelope.Msg.(map[string]interface{})
 				msg := maped["Msg"]
-				dbg1.Println("type:", reflect.TypeOf(msg))
+
 				term := maped["Term"].(float64)
-				//dbg1.Println("type:", reflect.TypeOf(term))
+
 				msgId := int(maped["MsgId"].(float64))
-				
+
 				if len(sc.log)-1 < envelope.PrevLogIndex || sc.log[envelope.PrevLogIndex].Term != envelope.PrevLogTerm {
 					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, MsgId: msgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDFAIL}
-					dbg3.Println("APPENFAIL1 sent", &cluster.Envelope{SendTo: envelope.SendBy, MsgId: msgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDFAIL})
+
 				} else if sc.currentLogIndex == envelope.PrevLogIndex+1 && sc.log[sc.currentLogIndex].Term != envelope.Term {
 					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, MsgId: msgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDFAIL}
-					dbg3.Println("APPENFAIL2 sent", &cluster.Envelope{SendTo: envelope.SendBy, MsgId: msgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDFAIL})
-					sc.log = sc.log[0 : sc.currentLogIndex]
+
+					sc.log = sc.log[0:sc.currentLogIndex]
 					sc.currentLogIndex -= 1
 				} else {
-					//dbg1.Println("type:", reflect.TypeOf(envelope.Msg))
-					
 
 					if int(msgId) > sc.log[len(sc.log)-1].MsgId {
-	
+
 						sc.log = append(sc.log, logItem{Term: int(term), Msg: msg, MsgId: int(msgId)})
-	
+
 						sc.currentLogIndex += 1
-						dbg3.Println("log index", sc.currentLogIndex)
-						dbg1.Println("envelope", envelope)
-						sc.msgId = envelope.MsgId+1
+						sc.msgId = envelope.MsgId + 1
 						sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, MsgId: envelope.MsgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDSUCCESS}
 						if envelope.LeaderCommit > sc.commitIndex {
-							dbg2.Println("settin commit index", envelope.LeaderCommit, sc.commitIndex)
+
 							sc.commitIndex = func(x, y int) int {
 								if x < y {
 									return x
 								}
 								return y
 							}(envelope.LeaderCommit, sc.currentLogIndex)
-						} 
-						dbg3.Println("APPENDSUCCESS", &cluster.Envelope{SendTo: envelope.SendBy, MsgId: envelope.MsgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDSUCCESS})
-						dbg1.Println(&cluster.Envelope{SendTo: envelope.SendBy, MsgId: envelope.MsgId, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: APPENDSUCCESS})
+						}
 					}
 				}
 			}
@@ -577,12 +561,12 @@ func followerLoop(sc *ServerConfig) {
 			timeChan = RandomTimer(sc.electionTODuration)
 			// If timer expires, promote itself to candidate and start a new election.
 		case <-timeChan:
-			dbg.Println("timer expired")
+
 			sc.mutex.Lock()
 			sc.state = CANDIDATE
 			sc.votedFor = NONE
 			sc.mutex.Unlock()
-			dbg.Println(sc.basicCluster.Mypid, "become candidate", sc.term, sc.state)
+
 			// If error channel has recieved a value, close the server.
 		case <-sc.ErrorChannel:
 			closeServer(sc)
@@ -608,25 +592,24 @@ func candidateLoop(sc *ServerConfig) {
 	sc.term++
 	sc.mutex.Unlock()
 
-	//	dbg.Println(sc.basicCluster.Mypid, "term", sc.term)
 	// vote for self
 	setVotedFor(sc, sc.basicCluster.Mypid)
 	totalVotesRecieved := 1
 	//reset timer
 	timeChan := RandomTimer(sc.electionTODuration)
 	// send request for voting on all peers
-	dbg.Println("send, incandidate", -1, sc.term)
-	sc.basicCluster.Output <- &cluster.Envelope{SendTo: -1, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: REQUESTVOTE, PrevLogIndex: len(sc.log)-1, PrevLogTerm: sc.log[len(sc.log)-1].Term}
+
+	sc.basicCluster.Output <- &cluster.Envelope{SendTo: -1, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: REQUESTVOTE, PrevLogIndex: len(sc.log) - 1, PrevLogTerm: sc.log[len(sc.log)-1].Term}
 
 	for getState(sc) == CANDIDATE {
 
 		select {
 		// wait for inbox channel
 		case envelope := <-sc.basicCluster.Input:
-			dbg.Println("recieve incandidate", sc.basicCluster.Mypid, envelope)
+
 			// if a lower term message is recieved, send a modify message...
 			if envelope.Term < getTerm(sc) {
-				dbg.Println(sc.basicCluster.Mypid, "send, incandidate1", envelope.SendBy, getTerm(sc), "MODIFY")
+
 				sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: MODIFY}
 				// if recieved message term is greater than my term, end election, become follower, return
 			} else if envelope.Type == HEARTBEAT || envelope.Type == APPEND {
@@ -634,14 +617,14 @@ func candidateLoop(sc *ServerConfig) {
 				setState(sc, FOLLOWER)
 				setVotedFor(sc, NONE)
 				setLeader(sc, envelope.SendBy)
-				dbg.Println(sc.basicCluster.Mypid, "became follower")
+
 				return
 			} else if envelope.Term > getTerm(sc) {
 				setTerm(sc, envelope.Term)
 				// if bigger term peer requests for vote, give him vote without thinking, as your vote to yourself is stale
 				if envelope.Type == REQUESTVOTE {
 					setVotedFor(sc, envelope.SendBy)
-					dbg.Println(sc.basicCluster.Mypid, "send, incandidate2", envelope.SendBy, getTerm(sc), "GRANTVOTE")
+
 					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: GRANTVOTE, VoteTo: envelope.SendBy}
 				}
 				setState(sc, FOLLOWER)
@@ -649,7 +632,7 @@ func candidateLoop(sc *ServerConfig) {
 				// if vote is granted, add to total votes
 			} else if envelope.Type == GRANTVOTE && envelope.VoteTo == sc.basicCluster.Mypid {
 				totalVotesRecieved++
-				dbg.Println("Votes", totalVotesRecieved)
+
 			}
 
 			// if majority votes recieved, become leader, return
@@ -657,7 +640,7 @@ func candidateLoop(sc *ServerConfig) {
 				setState(sc, LEADER)
 				setVotedFor(sc, NONE)
 				setLeader(sc, sc.basicCluster.Mypid)
-				dbg.Println(sc.basicCluster.Mypid, "became leader")
+
 				//setReady(sc, true)
 				sc.ready <- true
 				return
@@ -665,7 +648,7 @@ func candidateLoop(sc *ServerConfig) {
 			// if timeout
 		case <-timeChan:
 			// become follower, end election.
-			dbg.Println(sc.basicCluster.Mypid, "became follower again")
+
 			setVotedFor(sc, NONE)
 			setState(sc, FOLLOWER)
 			// If error channel has some value.
@@ -680,35 +663,31 @@ func clientInbox(sc *ServerConfig) {
 	for {
 		<-sc.ready
 		//if getReady(sc) == true {
-		dbg.Println("in client inbox waiting")
-		//dbg.Println(getReady(sc))
 		msg := <-sc.Input
-		dbg.Println("in client inbox recived")
-		//dbg.Println("type:", reflect.TypeOf(logItem{Term: getTerm(sc), Msg: msg}))
-		//entry := logItem{Term : getTerm(sc), Msg : msg} 
+
+		//entry := logItem{Term : getTerm(sc), Msg : msg}
 
 		sc.currentLogIndex = sc.currentLogIndex + 1
 		sc.log = append(sc.log, logItem{Term: getTerm(sc), Msg: msg, MsgId: sc.msgId})
 
 		sc.appendsrcvd = 1
-		//setReady(sc, false)
-		dbg.Println("sending to outbox")
+
 		sc.inFlight = sc.msgId
-		dbg3.Println("currentindex", sc.currentLogIndex)
+
 		sendToCluster(sc, msg)
-		//}
+
 	}
 }
 
 func sendToCluster(sc *ServerConfig, msg interface{}) {
 	for i := 0; i < sc.NoOfPeers; i++ {
-		dbg3.Println("sendcluster", sc.nextIndex)
+
 		if sc.currentLogIndex >= sc.nextIndex[i] {
 			if sc.msgSend[i] == sc.msgId {
-				dbg3.Println("APPEND", &cluster.Envelope{SendTo: sc.basicCluster.Mypeers[i], SendBy: sc.basicCluster.Mypid, MsgId: sc.msgId, Msg: logItem{Term: getTerm(sc), Msg: msg, MsgId: sc.msgId}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: sc.currentLogIndex - 1, PrevLogTerm: sc.log[sc.currentLogIndex-1].Term, LeaderCommit: sc.commitIndex})
+
 				sc.basicCluster.Output <- &cluster.Envelope{SendTo: sc.basicCluster.Mypeers[i], SendBy: sc.basicCluster.Mypid, MsgId: sc.msgId, Msg: logItem{Term: getTerm(sc), Msg: msg, MsgId: sc.msgId}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: sc.currentLogIndex - 1, PrevLogTerm: sc.log[sc.currentLogIndex-1].Term, LeaderCommit: sc.commitIndex}
 				sc.msgSend[i] = sc.msgId
-				//sc.nextIndex[i] += 1
+
 			}
 		}
 	}
@@ -723,41 +702,38 @@ func populateIndexArray(sc *ServerConfig) {
 // leaderLoop realizes the logic of LEADER as given in Raft consensus algorithm.
 func leaderLoop(sc *ServerConfig) {
 
-	//sc.log = append(sc.log, logItem{getTerm(sc), "" })
-	//dbg.Println("logslogs", sc.log, "logs")
 	// start heartbeat timer
 	// send message to all peers about the aliveness
 	populateIndexArray(sc)
-	dbg3.Println("leader ban gaya", sc.nextIndex, sc.log)
+
 	sc.basicCluster.Output <- &cluster.Envelope{SendTo: -1, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: HEARTBEAT}
-	dbg1.Println(sc.basicCluster.Mypid, "sending heartbeat", -1, getTerm(sc))
+
 	heartTimeChan := time.NewTimer(sc.heartbeatDuration)
 
 	for getState(sc) == LEADER {
 		select {
 		case <-heartTimeChan.C:
-			dbg.Println(sc.basicCluster.Mypid, "sending heartbeat", -1, getTerm(sc))
+
 			// send message to all peers about the aliveness
 			sc.basicCluster.Output <- &cluster.Envelope{SendTo: -1, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: HEARTBEAT}
-			
-			//dbg3.Println("hrtbt", sc.nextIndex)
-			for i:=0; i< len(sc.nextIndex); i++ {
+
+			for i := 0; i < len(sc.nextIndex); i++ {
 				if sc.nextIndex[i] < len(sc.log) && sc.msgSend[i] != sc.log[sc.nextIndex[i]].MsgId {
-					dbg3.Println(sc.nextIndex)
+
 					index := sc.nextIndex[i]
-					dbg4.Println("send fail hrtbeat", &cluster.Envelope{SendTo: sc.basicCluster.Mypeers[i], SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index-1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex})
-					sc.basicCluster.Output <- &cluster.Envelope{SendTo: sc.basicCluster.Mypeers[i], SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index-1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex}
+
+					sc.basicCluster.Output <- &cluster.Envelope{SendTo: sc.basicCluster.Mypeers[i], SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index - 1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex}
 					//sc.nextIndex[i] += 1
 					sc.msgSend[i] = sc.log[index].MsgId
-					dbg4.Println("sc.msgSend", sc.msgSend[i])
+
 				}
 			}
 			heartTimeChan = time.NewTimer(sc.heartbeatDuration)
 		// wait for input
 		case envelope := <-sc.basicCluster.Input:
-			dbg.Println("recieve inleader", sc.basicCluster.Mypid, envelope)
+
 			if envelope.Term < getTerm(sc) {
-				dbg.Println(sc.basicCluster.Mypid, "send, inleader1", envelope.SendBy, getTerm(sc), "MODIFY")
+
 				sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: MODIFY}
 				// if recieved message term is greater than my term, end election, become follower, return
 			} else if envelope.Type == HEARTBEAT {
@@ -765,36 +741,29 @@ func leaderLoop(sc *ServerConfig) {
 				setState(sc, FOLLOWER)
 				setVotedFor(sc, NONE)
 				setLeader(sc, envelope.SendBy)
-				dbg.Println(sc.basicCluster.Mypid, "became follower")
+
 				return
 			} else if envelope.Term > getTerm(sc) {
 				setTerm(sc, envelope.Term)
 				// if message recieved with higher term from leader for vote request, demote itself as follower and grant vote.
 				if envelope.Type == REQUESTVOTE {
 					setVotedFor(sc, envelope.SendBy)
-					dbg.Println(sc.basicCluster.Mypid, "send, inleader2", envelope.SendBy, getTerm(sc), "GRANTVOTE")
+
 					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, Term: getTerm(sc), Type: GRANTVOTE, VoteTo: envelope.SendBy}
 				}
 				setState(sc, FOLLOWER)
 				setVotedFor(sc, NONE)
-				dbg.Println(sc.basicCluster.Mypid, "became follower again")
+
 				return
 			} else if envelope.Type == APPENDSUCCESS {
-				dbg4.Println("inapsucc", sc.msgSend, sc.nextIndex)
-				dbg4.Println(sc.basicCluster.Mypeers)
-				dbg4.Println(sc.nextIndex)
 				if envelope.MsgId == sc.msgSend[findPid(sc, envelope.SendBy)] {
-					dbg4.Println("APENDSUCCESS", envelope)
-					dbg1.Println("appends", sc.appendsrcvd, "from", envelope.SendBy, "message id", envelope.MsgId)
 					sc.nextIndex[findPid(sc, envelope.SendBy)] += 1
 					sc.matchIndex[findPid(sc, envelope.SendBy)] += 1
 					if envelope.MsgId == sc.inFlight {
 						sc.appendsrcvd++
 						if sc.appendsrcvd >= sc.majority {
-							dbg1.Println("consensus attainedd")
-							dbg1.Println("peers", sc.basicCluster.Mypeers, "matchindex", sc.matchIndex)
 							//sc.Output <- envelope.Msg
-							dbg1.Println(sc.currentLogIndex)
+
 							if sc.log[sc.currentLogIndex].Term == sc.term {
 								sc.commitIndex = sc.currentLogIndex
 							}
@@ -802,32 +771,27 @@ func leaderLoop(sc *ServerConfig) {
 							sc.ready <- true
 							sc.inFlight = 0
 							sc.msgId += 1
-							dbg4.Println("commitindex", sc.commitIndex)
+
 						}
 					}
 				}
 				// if a lower term message is recieved, send a modify message...
 			} else if envelope.Type == APPENDFAIL {
-				dbg4.Println("APPENDFAIL recieved", envelope, "findpid", findPid(sc, envelope.SendBy), envelope.SendBy)
-				dbg4.Println("msgsend", sc.msgSend[findPid(sc, envelope.SendBy)], envelope.MsgId)
 				if sc.msgSend[findPid(sc, envelope.SendBy)] == envelope.MsgId {
-					dbg4.Println("index before", sc.nextIndex[findPid(sc, envelope.SendBy)])
+
 					sc.nextIndex[findPid(sc, envelope.SendBy)] -= 1
 					index := sc.nextIndex[findPid(sc, envelope.SendBy)]
 					if index == 0 {
 						index = 1
 						sc.nextIndex[findPid(sc, envelope.SendBy)] = 1
 					}
-					dbg4.Println("index array", sc.nextIndex)
-					dbg4.Println("index", index)
-					dbg4.Println("send fail", &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index-1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex})
-					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index-1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex}
+					sc.basicCluster.Output <- &cluster.Envelope{SendTo: envelope.SendBy, SendBy: sc.basicCluster.Mypid, MsgId: sc.log[index].MsgId, Msg: logItem{Term: sc.log[index].Term, MsgId: sc.log[index].MsgId, Msg: sc.log[index].Msg}, Term: getTerm(sc), Type: APPEND, PrevLogIndex: index - 1, PrevLogTerm: sc.log[index-1].Term, LeaderCommit: sc.commitIndex}
 					//sc.nextIndex[findPid(sc, envelope.SendBy)] += 1
 					sc.msgSend[findPid(sc, envelope.SendBy)] = sc.log[index].MsgId
 				}
 			}
 			heartTimeChan = time.NewTimer(sc.heartbeatDuration)
-		// If error.	
+		// If error.
 		case <-sc.ErrorChannel:
 			closeServer(sc)
 		}
