@@ -46,18 +46,20 @@ const dbg Debug = true
 const total_servers = 5
 
 var proc []*exec.Cmd
-var logFilePath []string
-var path, configFilePath, storeFilePath, serverLogPath string
+var logFilePath, storeFilePath []string
+var path, configFilePath, serverLogPath string
 
 func initialize() {
 	logFilePath = make([]string, total_servers)
+	storeFilePath = make([]string, total_servers)
 	path = os.Getenv("GOPATH") + "/bin/KVStore"
 	serverLogPath = os.Getenv("GOPATH") + "/KVStore/server.log"
 	
 	configFilePath = os.Getenv("GOPATH") + "/KVStore/config.json"
-	storeFilePath = os.Getenv("GOPATH") + "/KVStore/leveldblog.db"
+	
 	for i := 0; i < total_servers; i++ {
 		logFilePath[i] = os.Getenv("GOPATH") + "/KVStore/" + strconv.Itoa(i+1) + ".log"
+		storeFilePath[i] = os.Getenv("GOPATH") + "/KVStore/leveldblog" + strconv.Itoa(i+1)
 	}
 }
 
@@ -112,7 +114,7 @@ func Test_NoFault(t *testing.T) {
 
 
 	for i := 0; i < total_servers; i++ {
-		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath)
+		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath[i])
 
 		proc[i].Stdout = os.Stdout
 		proc[i].Stderr = os.Stderr
@@ -147,7 +149,7 @@ func Test_Stale(t *testing.T) {
 	initialize()
 	//left one server
 	for i := 1; i < total_servers; i++ {
-		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath)
+		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath[i])
 
 		proc[i].Stdout = os.Stdout
 		proc[i].Stderr = os.Stderr
@@ -162,7 +164,7 @@ func Test_Stale(t *testing.T) {
 	}
 	time.Sleep(5 * time.Second)
 
-	proc[0] = exec.Command(path, strconv.Itoa(1), configFilePath, logFilePath[0], storeFilePath)
+	proc[0] = exec.Command(path, strconv.Itoa(1), configFilePath, logFilePath[0], storeFilePath[0])
 	proc[0].Stdout = os.Stdout
 	proc[0].Stderr = os.Stderr
 
