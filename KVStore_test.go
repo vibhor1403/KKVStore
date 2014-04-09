@@ -59,6 +59,10 @@ func initialize() {
 	
 	for i := 0; i < total_servers; i++ {
 		logFilePath[i] = os.Getenv("GOPATH") + "/KVStore/" + strconv.Itoa(i+1) + ".log"
+		_, er := os.Create(logFilePath[i])
+		if er != nil {
+			panic("error creating file")
+		}
 		storeFilePath[i] = os.Getenv("GOPATH") + "/KVStore/leveldblog" + strconv.Itoa(i+1)
 	}
 }
@@ -88,6 +92,7 @@ func checkLogs() bool {
 			return y
 		}(len(datatype[i].Log), min)
 	}
+	fmt.Println("minimum", min)
 	var flag bool
 	for i := 0; i < min; i++ {
 		flag = true
@@ -131,6 +136,7 @@ func Test_NoFault(t *testing.T) {
 	for i := 0; i < total_servers; i++ {
 		proc[i].Process.Kill()
 	}
+	time.Sleep(2 * time.Second)
 	cmd := exec.Command("killall -9 KVStore")
 	cmd.Run()
 
@@ -146,15 +152,22 @@ func Test_Stale(t *testing.T) {
 
 	proc = make([]*exec.Cmd, total_servers)
 
-	initialize()
-	//left one server
-	for i := 1; i < total_servers; i++ {
+	//initialize()
+	
+	//Delete log file entries of one server
+	er := os.Remove(logFilePath[0])
+	if er == nil {
+		os.Create(logFilePath[0])
+	}
+
+	checkLogs()
+	for i := 0; i < total_servers; i++ {
 		proc[i] = exec.Command(path, strconv.Itoa(i+1), configFilePath, logFilePath[i], storeFilePath[i])
 
 		proc[i].Stdout = os.Stdout
 		proc[i].Stderr = os.Stderr
 	}
-	for i := 1; i < total_servers; i++ {
+	for i := 0; i < total_servers; i++ {
 		go func(i int) {
 			er := proc[i].Run()
 			if er != nil {
@@ -164,21 +177,16 @@ func Test_Stale(t *testing.T) {
 	}
 	time.Sleep(5 * time.Second)
 
-	proc[0] = exec.Command(path, strconv.Itoa(1), configFilePath, logFilePath[0], storeFilePath[0])
-	proc[0].Stdout = os.Stdout
-	proc[0].Stderr = os.Stderr
-
-	time.Sleep(10 * time.Second)
-
 	for i := 0; i < total_servers; i++ {
 		proc[i].Process.Kill()
 	}
+	time.Sleep(2 * time.Second)
 	cmd := exec.Command("killall -9 KVStore")
 	cmd.Run()
 
 	flag := checkLogs()
 	if flag == true {
-		t.Log("No fault test passed")
+		t.Log("Stale test test passed")
 	} else {
 		t.Error("Test failed, logs not equal")
 	}
