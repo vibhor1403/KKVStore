@@ -52,6 +52,7 @@ const dbg1 Debug = false
 const dbg2 Debug = false
 const dbg3 Debug = false
 const dbg4 Debug = true
+const dbg5 Debug = true
 
 // Server interface provides various methods for retriving information about the cluster.
 type Server interface {
@@ -246,12 +247,7 @@ func New(pid int, conf string, logFile string, storeFile string) Server {
 			LastApplied: 0,
 			VotedFor:    NONE}
 
-		data, err := json.Marshal(datatype)
-		if err != nil {
-			fmt.Println("marshalling data error", err)
-		}
-
-		er := ioutil.WriteFile(logFile, data, os.ModeExclusive)
+		_, er := os.Create(logFile)
 		if er != nil {
 			fmt.Println("writin file error", er)
 		}
@@ -259,10 +255,10 @@ func New(pid int, conf string, logFile string, storeFile string) Server {
 
 	store, er := leveldb.OpenFile(storeFile, nil)
 	if er != nil {
-		dbg4.Println(storeFile, "Could not open database")
+		//dbg4.Println(storeFile, "Could not open database", er)
 		panic("Unable to open db")
 	}
-	defer store.Close()
+	//defer store.Close()
 
 	// Inialization of mapping and server parameters.
 	mapping = make(map[int]string)
@@ -287,7 +283,12 @@ func New(pid int, conf string, logFile string, storeFile string) Server {
 		Output:             make(chan interface{}),
 		readyForClient:     false,
 		commitIndex:        len(datatype.Log) - 1,
-		lastApplied:        datatype.LastApplied,
+		lastApplied:        func(x, y int) int {
+								if x < y {
+									return x
+								}
+								return y
+							}(datatype.LastApplied, len(datatype.Log)),
 		nextIndex:          make([]int, jsontype.Object.Total-1),
 		matchIndex:         make([]int, jsontype.Object.Total-1),
 		currentLogIndex:    len(datatype.Log) - 1,
@@ -331,8 +332,10 @@ func applyLog(sc *ServerConfig, store *leveldb.DB) {
 		for i := sc.lastApplied + 1; i < sc.commitIndex; i++ {
 			logMsg := sc.log[i].Msg.(string)
 			splits := strings.Split(logMsg, " ")
+			//dbg5.Println(splits)
 			if splits[0] == "set" {
 				er = store.Put([]byte(splits[1]), []byte(splits[2]), nil)
+				//dbg5.Println("storing", er)
 				if er == nil {
 					sc.lastApplied += 1
 				}
@@ -763,9 +766,10 @@ func leaderLoop(sc *ServerConfig) {
 						sc.appendsrcvd++
 						if sc.appendsrcvd >= sc.majority {
 							//sc.Output <- envelope.Msg
-
+							dbg4.Println("consensus")
 							if sc.log[sc.currentLogIndex].Term == sc.term {
 								sc.commitIndex = sc.currentLogIndex
+								dbg4.Println(sc.commitIndex)
 							}
 							//setReady(sc, true)
 							sc.ready <- true
