@@ -1,6 +1,3 @@
-In progress.....
-
-
 KVStore
 =========
 
@@ -64,6 +61,9 @@ To retrieve the repository from github, use:
 ```sh
 go get github.com/vibhor1403/KVStore
 ```
+To test, I have assumed a folder named KVStore in GOPATH directory. This folder should contain the config file, and log files, initially empty.
+As, I have tested for 5 servers, and all the systems are running on local machine, 5 log files should be created in the same directory. Simply copy the KVStore folder provided in the repository to GOPATH.
+
 To test the cluster library, use:
 ```sh
 go test -v github.com/vibhor1403/KVStore
