@@ -14,7 +14,18 @@ The primary aim of this project is to make this library robust. Test cases are i
 
 Currently, **Leader election process** and **Log Replication** is implemented to its full extent.
 
-Overview
+
+
+How KVStore works??
+------------------------
+KVStore comprises of two main parts:
+1. Raft implementation
+2. Database Store
+
+It works as follows:
+At start the system reaches a consensus state using Raft leader election. At this point, client sends request to the leader, mainly for setting the values in database. Leader using the log replication mechanism, replicates it on all its peers. Once it gets replicated, it applies the same to its state machine. Not only the leader, but all the peers periodically applies the data to state machine. Now when next time client request such data from any of the server, its request can be fulfilled.
+
+Raft protocol
 ----------
 
 As a part of Raft consensus protocol, two things needs to be implemented:
@@ -36,55 +47,35 @@ The following figure specifies the whole server states and how they can move fro
 
 LOG REPLICATION
 
+After getting elected as Leader, the server starts accepting client requests. Once it recieves a client request, it forwards the request to all its peers and creates the log entry for the same. Peers on getting such request, stores the message along with leader term in log, and respond to the leader. On getting response from majority of peers (quorum size), leader marks this entry as committed, which will be notified to other peers in the next round.
+Thus, it maintains consistency among all the peers.
 
 TODO
 -------------
 
 Many things need to be added to it to make a complete Raft library. However, in the current implementation also, some things can be added to make it more robust.
 
-1. Testing a scenario, where if a leader is chosen and suddenly that server is partitioned off from other. In such case, there can be more than one leader.
-2. Saving the current term in disk, so that when the server wakes up, reads that value.
-3. Heavy stress testing, where servers are going down and waking up very quickly. However, this scenario is highly unlikely in real environment.
+1. Heavy stress testing, where servers are going down and waking up very quickly. 
 
 Usage
 --------------
 
 To retrieve the repository from github, use: 
 ```sh
-go get github.com/vibhor1403/Leader
+go get github.com/vibhor1403/KVStore
 ```
 To test the cluster library, use:
 ```sh
-go test -v github.com/vibhor1403/Leader/Raft
+go test -v github.com/vibhor1403/KVStore
 ```
 This will test the library on all aspects, considering 5 servers passing messages between each other.
 
 To run a single instance of server, use:
 ```sh
-Leader -pid=<pid-of-this-server>
+KVStore <pid> <configFilePath> <logFilePath> <databaseStorePath>
 ```
 
 This pid should be present in the config.json file. This will start the server and broadcast a message to all its peers.
-
-***Assumption*** : config.json is present in the same place where the bash terminal is, when this command is issued.
-
-
-API's
--------
-
-[![GoDoc](http://godoc.org/github.com/vibhor1403/Leader/Raft?status.png)](http://godoc.org/github.com/vibhor1403/Leader/Raft)
-
-The following few functions can be used:
-
-* `New(pid int, conf string)` - starts a new server with the given pid and location of configuration file.
-
-* `State()` - gets the current state (LEADER, FOLLOWER, CANDIDATE) of the server.
-
-* `Leader()` - In stable state, gets the leader pid.
-
-* `UnsetPartitionValue()` - Unsets the value of partitionArray, which simulates network failure. 
-
-* `ServerStopped()` - Channel which signifies that the server is completely closed. Simulates break down of the server.
 
 
 Tweaking
@@ -130,23 +121,3 @@ This file contains the pid and url of all servers in the cluster. It is required
     	}
 }
 ```
-
-How Raft works??
-------------------------
-
-The Raft package first initializes the data structure needed for that particular server. This data structure conatains the following main fields:
-
-* **Mypid** - Contains the pid of this server.
-* **Url** - Contains the url of this server.
-* **Peers** - Contains a list of all peers to whom to connect to.
-* **Input** - Input channel (for storing incoming messages).
-* **Output** - Output channel (for storing outgoing messages).
-* **Error** - Error channel for controlling closing of server.
-* **Sockets** - Array of all outbound sockets.
-* **Term** - Local counter, which is sent across peers for cordination.
-              
-The library then start three goroutines:
-
-* One for sending messages to other servers.
-* One for recieving messages
-* One to implement the main loop for leader selection.
