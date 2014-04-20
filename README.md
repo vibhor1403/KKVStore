@@ -52,7 +52,9 @@ TODO
 
 Many things need to be added to it to make a complete Raft library. However, in the current implementation also, some things can be added to make it more robust.
 
-1. Heavy stress testing, where servers are going down and waking up very quickly. 
+1. Heavy stress testing, where servers are going down and waking up very quickly.
+2. Redirection of requests, where if a request reaches to a server, who is currently not a leader, it redirects request ot leader.
+3. Discarding logs on demand.
 
 Usage
 --------------
@@ -61,8 +63,8 @@ To retrieve the repository from github, use:
 ```sh
 go get github.com/vibhor1403/KVStore
 ```
-To test, I have assumed a folder named KVStore in GOPATH directory. This folder should contain the config file, and log files, initially empty.
-As, I have tested for 5 servers, and all the systems are running on local machine, 5 log files should be created in the same directory. Simply copy the KVStore folder provided in the repository to GOPATH.
+To test, I have assumed a folder named KVStore in GOPATH directory. This folder should contain the config file.
+As, I have tested for 5 servers, and all the systems are running on local machine, 5 log files will be created in the same directory. Simply copy the KVStore folder provided in the repository to GOPATH.
 
 To test the cluster library, use:
 ```sh
