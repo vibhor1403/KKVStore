@@ -42,7 +42,7 @@ func (d Debug) Println(a ...interface{}) {
 	}
 }
 
-const dbg Debug = true
+const dbg Debug = false
 const total_servers = 5
 
 var proc []*exec.Cmd
