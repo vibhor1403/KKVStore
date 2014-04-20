@@ -92,7 +92,7 @@ func checkLogs() bool {
 			return y
 		}(len(datatype[i].Log), min)
 	}
-	fmt.Println("minimum", min)
+	//fmt.Println("minimum", min)
 	var flag bool
 	for i := 0; i < min; i++ {
 		flag = true
