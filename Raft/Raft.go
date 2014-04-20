@@ -51,8 +51,8 @@ const dbg Debug = false
 const dbg1 Debug = false
 const dbg2 Debug = false
 const dbg3 Debug = false
-const dbg4 Debug = true
-const dbg5 Debug = true
+const dbg4 Debug = false
+const dbg5 Debug = false
 
 // Server interface provides various methods for retriving information about the cluster.
 type Server interface {
